@@ -3,11 +3,10 @@ package dev.simplix.protocolize.bungee.strategies;
 import com.google.common.base.Supplier;
 import dev.simplix.protocolize.api.util.ReflectionUtil;
 import dev.simplix.protocolize.bungee.strategy.PacketRegistrationStrategy;
-import gnu.trove.map.TIntObjectMap;
-import gnu.trove.map.TObjectIntMap;
 import net.md_5.bungee.api.ProxyServer;
 
 import java.lang.reflect.Field;
+import java.lang.reflect.Method;
 
 /**
  * Date: 21.08.2021
@@ -21,14 +20,24 @@ public class AegisPacketRegistrationStrategy implements PacketRegistrationStrate
     private final Field protocolDataConstructorsField = ReflectionUtil.fieldOrNull(protocolDataClass, "packetConstructors", true);
     private final Field protocolDataPacketMapField = ReflectionUtil.fieldOrNull(protocolDataClass, "packetMap", true);
 
+    private Method protocolsGetMethod;
+    private Method packetMapPutMethod;
+
     @Override
-    public void registerPacket(TIntObjectMap<Object> protocols, int protocolVersion, int packetId, Class<?> clazz) throws IllegalAccessException {
-        final Object protocolData = protocols.get(protocolVersion);
+    public void registerPacket(Object protocols, int protocolVersion, int packetId, Class<?> clazz) throws Exception {
+        if (protocolsGetMethod == null) {
+            protocolsGetMethod = protocols.getClass().getMethod("get", int.class);
+        }
+        final Object protocolData = protocolsGetMethod.invoke(protocols, protocolVersion);
         if (protocolData == null) {
             ProxyServer.getInstance().getLogger().finest("[Protocolize | DEBUG] Protocol version " + protocolVersion + " is not supported on this aegis version. Skipping registration for that specific version.");
             return;
         }
-        ((TObjectIntMap<Class<?>>) protocolDataPacketMapField.get(protocolData)).put(clazz, packetId);
+        Object packetMap = protocolDataPacketMapField.get(protocolData);
+        if (packetMapPutMethod == null) {
+            packetMapPutMethod = packetMap.getClass().getMethod("put", Object.class, int.class);
+        }
+        packetMapPutMethod.invoke(packetMap, clazz, packetId);
         ((Supplier[]) protocolDataConstructorsField.get(protocolData))[packetId] = () -> {
             try {
                 return clazz.getDeclaredConstructor().newInstance();
