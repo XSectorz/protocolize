@@ -125,14 +125,12 @@ public final class BungeeCordProtocolRegistrationProvider implements ProtocolReg
         } else {
             Object data = getDirectionData(bungeeCordProtocol(protocol), direction);
             try {
-                return (int) getIdMethod.invoke(data, packet.getClass(), protocolVersion);
-            } catch (final IllegalAccessException | InvocationTargetException e) {
-                if (e.getCause() != null && e.getCause() instanceof IllegalArgumentException) {
-                    try {
-                        return (int) getIdMethod.invoke(data, packet.getClass(), protocolVersion);
-                    } catch (final IllegalAccessException | InvocationTargetException e1) {
-                    }
+                Object result = getIdMethod.invoke(data, packet.getClass(), protocolVersion);
+                if (result != null) {
+                    return (int) result;
                 }
+            } catch (final IllegalAccessException | InvocationTargetException e) {
+                // Ignore - packet not registered for this version
             }
         }
         return -1;
@@ -152,7 +150,20 @@ public final class BungeeCordProtocolRegistrationProvider implements ProtocolReg
         if (protocolIdMapping != null) {
             id = protocolIdMapping.id();
         } else {
-            id = (int) getIdMethod.invoke(directionData, clazz, protocolVersion);
+            try {
+                Object result = getIdMethod.invoke(directionData, clazz, protocolVersion);
+                if (result == null) {
+                    log.warn("[Protocolize] getId returned null for {} at protocol {}", clazz.getName(), protocolVersion);
+                    return null;
+                }
+                id = (int) result;
+            } catch (InvocationTargetException e) {
+                if (e.getCause() instanceof NullPointerException) {
+                    log.warn("[Protocolize] Packet {} not registered for protocol version {}", clazz.getName(), protocolVersion);
+                    return null;
+                }
+                throw e;
+            }
         }
         return createPacketMethod.invoke(directionData, id, protocolVersion);
     }
