@@ -146,26 +146,31 @@ public final class BungeeCordProtocolRegistrationProvider implements ProtocolReg
         Object directionData = getDirectionData(bungeeCordProtocol(protocol), direction);
         ProtocolIdMapping protocolIdMapping = mappingProvider.mapping(new RegisteredPacket(direction, clazz),
             protocolVersion);
-        int id;
         if (protocolIdMapping != null) {
-            id = protocolIdMapping.id();
+            // We have a mapping — try BungeeCord's createPacket first, fall back to direct instantiation
+            try {
+                Object result = createPacketMethod.invoke(directionData, protocolIdMapping.id(), protocolVersion);
+                if (result != null) return result;
+            } catch (InvocationTargetException e) {
+                // BungeeCord internal registry doesn't have it, create directly
+            }
+            // Direct instantiation via the generated BungeeCord packet class
+            try {
+                Class<? extends DefinedPacket> bungeeClass = generateBungeePacket(clazz);
+                return bungeeClass.getDeclaredConstructor().newInstance();
+            } catch (Exception e) {
+                log.warn("[Protocolize] Failed to create packet {} for protocol {}", clazz.getName(), protocolVersion, e);
+                return null;
+            }
         } else {
             try {
                 Object result = getIdMethod.invoke(directionData, clazz, protocolVersion);
-                if (result == null) {
-                    log.warn("[Protocolize] getId returned null for {} at protocol {}", clazz.getName(), protocolVersion);
-                    return null;
-                }
-                id = (int) result;
+                if (result == null) return null;
+                return createPacketMethod.invoke(directionData, (int) result, protocolVersion);
             } catch (InvocationTargetException e) {
-                if (e.getCause() instanceof NullPointerException) {
-                    log.warn("[Protocolize] Packet {} not registered for protocol version {}", clazz.getName(), protocolVersion);
-                    return null;
-                }
-                throw e;
+                return null;
             }
         }
-        return createPacketMethod.invoke(directionData, id, protocolVersion);
     }
 
     @Override
