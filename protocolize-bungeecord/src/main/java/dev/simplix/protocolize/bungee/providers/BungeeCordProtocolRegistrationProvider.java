@@ -92,8 +92,11 @@ public final class BungeeCordProtocolRegistrationProvider implements ProtocolReg
             for (ProtocolIdMapping mapping : mappings) {
                 mappingProvider.registerMapping(new RegisteredPacket(direction, packetClass), mapping);
                 for (int i = mapping.protocolRangeStart(); i <= mapping.protocolRangeEnd(); i++) {
-                    strategy.registerPacket(protocols, i, mapping.id(), definedPacketClass);
-                    log.debug("[Protocolize] Register packet {} (0x{}) in direction {} at protocol {} for version {}", definedPacketClass.getName(), Integer.toHexString(mapping.id()), direction.name(), protocol.name(), i);
+                    try {
+                        strategy.registerPacket(protocols, i, mapping.id(), definedPacketClass);
+                    } catch (Exception ex) {
+                        log.warn("[Protocolize] Failed to register packet {} for protocol version {}: {}", packetClass.getSimpleName(), i, ex.getMessage());
+                    }
                 }
             }
         } catch (Exception e) {
