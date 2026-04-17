@@ -3,18 +3,14 @@ package dev.simplix.protocolize.bungee.player;
 import dev.simplix.protocolize.api.*;
 import dev.simplix.protocolize.api.inventory.Inventory;
 import dev.simplix.protocolize.api.inventory.PlayerInventory;
-import dev.simplix.protocolize.api.mapping.ProtocolIdMapping;
 import dev.simplix.protocolize.api.packet.AbstractPacket;
-import dev.simplix.protocolize.api.packet.RegisteredPacket;
 import dev.simplix.protocolize.api.player.ProtocolizePlayer;
-import dev.simplix.protocolize.api.providers.MappingProvider;
 import dev.simplix.protocolize.api.providers.ProtocolRegistrationProvider;
 import dev.simplix.protocolize.bungee.packet.BungeeCordProtocolizePacket;
 import dev.simplix.protocolize.bungee.util.ReflectionUtil;
-import io.netty.buffer.ByteBuf;
-import io.netty.buffer.Unpooled;
 import lombok.Getter;
 import lombok.experimental.Accessors;
+import lombok.extern.slf4j.Slf4j;
 import net.md_5.bungee.api.ProxyServer;
 import net.md_5.bungee.api.connection.ProxiedPlayer;
 import net.md_5.bungee.api.connection.Server;
@@ -28,17 +24,12 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Consumer;
 
-/**
- * Date: 26.08.2021
- *
- * @author Exceptionflug
- */
+@Slf4j
 @Getter
 @Accessors(fluent = true)
 public class BungeeCordProtocolizePlayer implements ProtocolizePlayer {
 
     private static final ProtocolRegistrationProvider REGISTRATION_PROVIDER = Protocolize.protocolRegistration();
-    private static final MappingProvider MAPPING_PROVIDER = Protocolize.mappingProvider();
     private final List<Consumer<PlayerInteract>> interactConsumers = new ArrayList<>();
     private final AtomicInteger windowId = new AtomicInteger(101);
     private final Map<Integer, Inventory> registeredInventories = new ConcurrentHashMap<>();
@@ -52,18 +43,16 @@ public class BungeeCordProtocolizePlayer implements ProtocolizePlayer {
 
     @Override
     public void sendPacket(Object packet) {
-        if (packet instanceof AbstractPacket abstractPacket) {
+        if (packet instanceof AbstractPacket) {
             BungeeCordProtocolizePacket pack = (BungeeCordProtocolizePacket) REGISTRATION_PROVIDER.createPacket(
                 (Class<? extends AbstractPacket>) packet.getClass(),
                 Protocol.PLAY, PacketDirection.CLIENTBOUND, protocolVersion());
-            if (pack != null) {
-                pack.wrapper(abstractPacket);
-                packet = pack;
-            } else {
-                // Fallback: send raw packet bytes directly
-                sendRawPacket(abstractPacket, PacketDirection.CLIENTBOUND);
+            if (pack == null) {
+                log.warn("[Protocolize] Failed to create packet {} for protocol version {}", packet.getClass().getName(), protocolVersion());
                 return;
             }
+            pack.wrapper((AbstractPacket) packet);
+            packet = pack;
         }
         ProxiedPlayer player = player();
         if (player != null) {
@@ -73,16 +62,16 @@ public class BungeeCordProtocolizePlayer implements ProtocolizePlayer {
 
     @Override
     public void sendPacketToServer(Object packet) {
-        if (packet instanceof AbstractPacket abstractPacket) {
+        if (packet instanceof AbstractPacket) {
             BungeeCordProtocolizePacket pack = (BungeeCordProtocolizePacket) REGISTRATION_PROVIDER.createPacket(
                 (Class<? extends AbstractPacket>) packet.getClass(),
                 Protocol.PLAY, PacketDirection.SERVERBOUND, protocolVersion());
-            if (pack != null) {
-                pack.wrapper(abstractPacket);
-                packet = pack;
-            } else {
-                return; // Can't send to server without proper registration
+            if (pack == null) {
+                log.warn("[Protocolize] Failed to create server packet {} for protocol version {}", packet.getClass().getName(), protocolVersion());
+                return;
             }
+            pack.wrapper((AbstractPacket) packet);
+            packet = pack;
         }
         ProxiedPlayer player = player();
         if (player != null) {
@@ -92,46 +81,6 @@ public class BungeeCordProtocolizePlayer implements ProtocolizePlayer {
             }
             server.unsafe().sendPacket((DefinedPacket) packet);
         }
-    }
-
-    private void sendRawPacket(AbstractPacket abstractPacket, PacketDirection direction) {
-        ProxiedPlayer player = player();
-        if (player == null) return;
-
-        int version = protocolVersion();
-        ProtocolIdMapping mapping = MAPPING_PROVIDER.mapping(
-            new RegisteredPacket(direction, abstractPacket.getClass()), version);
-        if (mapping == null) return;
-
-        // Write packet data to buffer and send via netty channel
-        ByteBuf buf = Unpooled.buffer();
-        try {
-            // Write packet ID as varint
-            writeVarInt(mapping.id(), buf);
-            // Write packet content
-            abstractPacket.write(buf, direction, version);
-
-            // Get the channel from the player and write directly
-            java.lang.reflect.Method getChannelWrapper = player.getClass().getMethod("getCh");
-            getChannelWrapper.setAccessible(true);
-            Object channelWrapper = getChannelWrapper.invoke(player);
-            java.lang.reflect.Method getHandle = channelWrapper.getClass().getMethod("getHandle");
-            getHandle.setAccessible(true);
-            io.netty.channel.Channel channel = (io.netty.channel.Channel) getHandle.invoke(channelWrapper);
-            channel.writeAndFlush(buf.retain());
-        } catch (Exception e) {
-            // ignore
-        } finally {
-            buf.release();
-        }
-    }
-
-    private static void writeVarInt(int value, ByteBuf buf) {
-        while ((value & -128) != 0) {
-            buf.writeByte(value & 127 | 128);
-            value >>>= 7;
-        }
-        buf.writeByte(value);
     }
 
     @Override

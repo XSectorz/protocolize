@@ -23,31 +23,17 @@ public final class BungeeCordPacketRegistrationStrategy implements PacketRegistr
     private Method protocolsGetMethod;
     private Method packetMapPutMethod;
 
-    private Method findMethod(Object obj, String name, Class<?>... paramTypes) {
-        // Search declared methods first to find the exact signature
-        for (Method m : obj.getClass().getMethods()) {
-            if (!m.getName().equals(name)) continue;
-            Class<?>[] params = m.getParameterTypes();
-            if (params.length != paramTypes.length) continue;
-            boolean match = true;
-            for (int i = 0; i < params.length; i++) {
-                if (!params[i].equals(paramTypes[i])) {
-                    match = false;
+    @Override
+    public void registerPacket(Object protocols, int protocolVersion, int packetId, Class<?> clazz) throws Exception {
+        // Resolve get(int) on protocols map
+        if (protocolsGetMethod == null) {
+            for (Method m : protocols.getClass().getMethods()) {
+                if (m.getName().equals("get") && m.getParameterCount() == 1 && m.getParameterTypes()[0] == int.class) {
+                    protocolsGetMethod = m;
                     break;
                 }
             }
-            if (match) return m;
-        }
-        return null;
-    }
-
-    @Override
-    public void registerPacket(Object protocols, int protocolVersion, int packetId, Class<?> clazz) throws Exception {
-        // Resolve get(int) method on protocols map (works for both TIntObjectMap and Int2ObjectMap)
-        if (protocolsGetMethod == null) {
-            protocolsGetMethod = findMethod(protocols, "get", int.class);
             if (protocolsGetMethod == null) {
-                // Fallback: try Object key
                 protocolsGetMethod = protocols.getClass().getMethod("get", Object.class);
             }
         }
@@ -56,31 +42,42 @@ public final class BungeeCordPacketRegistrationStrategy implements PacketRegistr
         if (protocolsGetMethod.getParameterTypes()[0] == int.class) {
             protocolData = protocolsGetMethod.invoke(protocols, protocolVersion);
         } else {
-            protocolData = protocolsGetMethod.invoke(protocols, (Integer) protocolVersion);
+            protocolData = protocolsGetMethod.invoke(protocols, Integer.valueOf(protocolVersion));
         }
 
         if (protocolData == null) {
-            log.debug("[Protocolize | DEBUG] Protocol version {} is not supported on this version. Skipping.", protocolVersion);
             return;
         }
 
-        // Resolve put method on packetMap (works for both TObjectIntMap and Object2IntMap)
+        // Resolve put on packetMap - search all methods for compatible signature
         Object packetMap = protocolDataPacketMapField.get(protocolData);
         if (packetMapPutMethod == null) {
-            // Try primitive int first (Trove TObjectIntMap and fastutil Object2IntMap both have put(K, int))
-            packetMapPutMethod = findMethod(packetMap, "put", Object.class, int.class);
+            for (Method m : packetMap.getClass().getMethods()) {
+                if (!m.getName().equals("put")) continue;
+                Class<?>[] params = m.getParameterTypes();
+                if (params.length != 2) continue;
+                // Look for put(Object/Class, int) or put(Object/Class, Integer)
+                if (params[0].isAssignableFrom(Class.class) &&
+                    (params[1] == int.class || params[1] == Integer.class)) {
+                    packetMapPutMethod = m;
+                    break;
+                }
+            }
+            // Final fallback: Map.put(Object, Object)
             if (packetMapPutMethod == null) {
-                // Fallback: Map.put(Object, Object)
                 packetMapPutMethod = packetMap.getClass().getMethod("put", Object.class, Object.class);
             }
         }
 
-        if (packetMapPutMethod.getParameterTypes()[1] == int.class) {
+        // Invoke put with correct parameter types
+        Class<?>[] paramTypes = packetMapPutMethod.getParameterTypes();
+        if (paramTypes[1] == int.class) {
             packetMapPutMethod.invoke(packetMap, clazz, packetId);
         } else {
-            packetMapPutMethod.invoke(packetMap, clazz, (Integer) packetId);
+            packetMapPutMethod.invoke(packetMap, clazz, Integer.valueOf(packetId));
         }
 
+        // Register constructor
         ((Supplier[]) protocolDataConstructorsField.get(protocolData))[packetId] = () -> {
             try {
                 return clazz.getDeclaredConstructor().newInstance();
