@@ -150,24 +150,20 @@ public final class BungeeCordProtocolRegistrationProvider implements ProtocolReg
         ProtocolIdMapping protocolIdMapping = mappingProvider.mapping(new RegisteredPacket(direction, clazz),
             protocolVersion);
         if (protocolIdMapping != null) {
+            // We have a mapping - try BungeeCord internal first, fallback to direct instantiation
             try {
-                return createPacketMethod.invoke(directionData, protocolIdMapping.id(), protocolVersion);
-            } catch (InvocationTargetException e) {
-                log.warn("[Protocolize] createPacket failed for {} at protocol {}, trying direct instantiation", clazz.getName(), protocolVersion);
-                try {
-                    Class<? extends DefinedPacket> bungeeClass = generateBungeePacket(clazz);
-                    return bungeeClass.getDeclaredConstructor().newInstance();
-                } catch (Exception ex) {
-                    log.warn("[Protocolize] Direct instantiation also failed for {}", clazz.getName(), ex);
-                    return null;
-                }
+                Object result = createPacketMethod.invoke(directionData, protocolIdMapping.id(), protocolVersion);
+                if (result != null) return result;
+            } catch (Exception ignored) {
             }
+            // Fallback: create the wrapper directly (for FlameCord / unsupported protocol versions)
+            return generateBungeePacket(clazz).getDeclaredConstructor().newInstance();
         } else {
             try {
                 Object result = getIdMethod.invoke(directionData, clazz, protocolVersion);
                 if (result == null) return null;
                 return createPacketMethod.invoke(directionData, (int) result, protocolVersion);
-            } catch (InvocationTargetException e) {
+            } catch (Exception e) {
                 return null;
             }
         }
